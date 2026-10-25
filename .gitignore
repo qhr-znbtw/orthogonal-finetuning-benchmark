@@ -1,0 +1,33 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments and editor files
+.venv/
+venv/
+env/
+.idea/
+.vscode/
+
+# Local datasets, pretrained weights, and training outputs
+data/
+pretrained/
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# Experiment logs
+runs/
+wandb/
+logs/
+
+# Operating-system files
+.DS_Store
+Thumbs.db
+

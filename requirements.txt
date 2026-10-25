@@ -1,0 +1,5 @@
+torch>=2.5
+torchvision>=0.20
+safetensors>=0.4
+huggingface-hub>=0.26
+
