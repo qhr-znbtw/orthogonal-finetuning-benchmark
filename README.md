@@ -1,109 +1,111 @@
 # ViT-LoRA for Oxford-IIIT Pet Classification
 
-一个从零实现核心网络结构的参数高效迁移学习项目：把 ImageNet 预训练的 ViT-B/16 迁移到 Oxford-IIIT Pet 37 类细粒度分类任务，并且仅训练 Query/Value LoRA 分支与新的分类头。
+A compact, from-scratch implementation of parameter-efficient transfer learning for fine-grained image classification. The project adapts an ImageNet-pretrained ViT-B/16 to the 37-class Oxford-IIIT Pet dataset by training only LoRA branches in the attention layers and a new classification head.
 
-## 实验结果
+## Results
 
-| 指标 | 结果 |
+| Metric | Result |
 | --- | ---: |
-| 最佳验证准确率 | **95.52%** |
-| 官方测试集准确率 | **93.38%** |
-| 测试集正确数 | **3426 / 3669** |
-| 总参数量 | 86,122,021 |
-| 可训练参数量 | 323,365 |
-| 可训练参数占比 | **0.375%** |
+| Best validation accuracy | **95.52%** |
+| Official test accuracy | **93.38%** |
+| Correct test predictions | **3,426 / 3,669** |
+| Total parameters | 86,122,021 |
+| Trainable parameters | 323,365 |
+| Trainable fraction | **0.375%** |
 
-实验使用单张 NVIDIA GeForce RTX 4070 Ti SUPER，训练 20 个 epoch；最佳验证结果出现在第 9 个 epoch。完整训练过程与结论见 [research_report.md](research_report.md)。
+The model was trained for 20 epochs on a single NVIDIA GeForce RTX 4070 Ti SUPER. The best validation result was reached at epoch 9. See [research_report.md](research_report.md) for the complete training history, experimental setup, and discussion.
 
-## 方法
+## Method
 
-- 主干：`google/vit-base-patch16-224`
-- 输入：`224 × 224` RGB 图像
-- ViT：12 个 Transformer Encoder Block，隐藏维度 768，12 个注意力头
-- LoRA：加入全部 Encoder Block 的 Query 与 Value 投影
-- LoRA rank：8
-- LoRA alpha：8
-- 分类头：`LayerNorm + Linear(768, 37)`
-- 优化范围：仅 LoRA 参数和分类头
+- **Pretrained backbone:** `google/vit-base-patch16-224`
+- **Input resolution:** `224 x 224` RGB
+- **Transformer:** 12 encoder blocks, hidden size 768, 12 attention heads
+- **LoRA targets:** Query and Value projections in every encoder block
+- **LoRA rank:** 8
+- **LoRA alpha:** 8
+- **Task head:** `LayerNorm + Linear(768, 37)`
+- **Optimized parameters:** LoRA branches and the classification head only
 
-本项目直接实现 ViT 嵌入层、Multi-Head Self-Attention、MLP、Encoder Block 和 LoRA 线性层，并通过参数名映射加载 Hugging Face 发布的预训练权重，而不是直接调用完整的现成分类模型。
+Instead of wrapping a complete off-the-shelf classification model, this repository implements the ViT embedding layer, multi-head self-attention, MLP, encoder block, and LoRA linear layer directly in PyTorch. A transparent parameter-name mapping then loads the official Hugging Face ViT-B/16 weights into the custom architecture.
 
-## 项目结构
+## Repository Structure
 
 ```text
 .
-├── dataset.py                    # 数据划分与 DataLoader
-├── download_pet_dataset.py       # 下载 Oxford-IIIT Pet
-├── download_pretrained_model.py  # 下载 ViT-B/16 预训练权重
-├── load_pretrained_model.py      # 映射并加载预训练参数
-├── main.py                       # 完整训练与测试入口
-├── net.py                        # ViT-B/16 与 LoRA 实现
-├── test.py                       # 验证/测试逻辑
-├── train.py                      # 单轮及多轮训练逻辑
-├── research_report.md            # 完整研究报告与逐轮结果
+├── dataset.py                    # Stratified split and data loaders
+├── download_pet_dataset.py       # Oxford-IIIT Pet download script
+├── download_pretrained_model.py  # ViT-B/16 weight download script
+├── load_pretrained_model.py      # Pretrained parameter mapping and loading
+├── main.py                       # End-to-end training and evaluation entry point
+├── net.py                        # ViT-B/16 and LoRA implementation
+├── test.py                       # Validation and test loop
+├── train.py                      # Single-epoch and multi-epoch training loops
+├── research_report.md            # Full report and epoch-by-epoch results
 └── requirements.txt
 ```
 
-数据集、预训练模型与训练 checkpoint 不提交到 Git 仓库，可通过脚本下载或在本地重新生成。
+Datasets, pretrained weights, caches, and generated checkpoints are intentionally excluded from Git. They can be downloaded or reproduced locally with the provided scripts.
 
-## 环境安装
+## Installation
 
-建议使用 Python 3.10 或更高版本，并根据本机 CUDA 版本从 [PyTorch 官网](https://pytorch.org/get-started/locally/) 安装匹配的 PyTorch。其余依赖可执行：
+Python 3.10 or newer is recommended. Install a PyTorch build compatible with your CUDA environment from the [official PyTorch installation page](https://pytorch.org/get-started/locally/), then install the remaining dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## 复现实验
+## Reproducing the Experiment
 
-1. 下载 Oxford-IIIT Pet：
+1. Download Oxford-IIIT Pet:
 
    ```bash
    python download_pet_dataset.py
    ```
 
-2. 下载预训练 ViT-B/16：
+2. Download the pretrained ViT-B/16 weights:
 
    ```bash
    python download_pretrained_model.py
    ```
 
-3. 开始训练并在最佳检查点上测试：
+3. Train the model and evaluate the best checkpoint:
 
    ```bash
    python main.py
    ```
 
-最佳模型默认保存至 `checkpoints/best_model.pt`。固定随机种子为 42，训练集与验证集从官方 `trainval` 集按类别进行 8:2 分层划分，官方测试集只用于最终评估。
+The best validation checkpoint is saved to `checkpoints/best_model.pt`. The random seed is fixed at 42. The official `trainval` split is divided into stratified training and validation subsets at an 80:20 ratio, while the official test split is reserved for final evaluation.
 
-## 训练配置
+## Training Configuration
 
-| 超参数 | 数值 |
+| Hyperparameter | Value |
 | --- | ---: |
-| Epoch | 20 |
-| 训练 batch size | 32 |
-| 验证/测试 batch size | 64 |
-| LoRA 学习率 | `1e-4` |
-| 分类头学习率 | `1e-3` |
+| Epochs | 20 |
+| Training batch size | 32 |
+| Validation/test batch size | 64 |
+| LoRA learning rate | `1e-4` |
+| Classification-head learning rate | `1e-3` |
 | Weight decay | `0.01` |
-| 优化器 | AdamW |
-| 损失函数 | CrossEntropyLoss |
+| Optimizer | AdamW |
+| Loss | Cross-entropy |
+| Random seed | 42 |
 
-## 当前结论与边界
+Training uses BF16 automatic mixed precision when supported by the selected CUDA device.
 
-当前结果表明，该实现能够以不到 0.4% 的可训练参数完成有效的细粒度宠物分类。当前仓库记录的是一次完整 LoRA 实验，尚未完成“冻结主干、只训练分类头”的 baseline、不同 rank 的消融实验和多随机种子重复实验，因此不能仅凭现有结果宣称 LoRA 优于其他迁移方法。
+## Scope and Limitations
 
-## 后续计划
+This experiment demonstrates that the custom ViT-LoRA pipeline can perform fine-grained pet classification while updating fewer than 0.4% of the model parameters. It does **not** yet establish that LoRA is superior to other transfer-learning strategies. A frozen-backbone linear-head baseline, full fine-tuning, rank ablations, and repeated runs with multiple random seeds remain to be completed.
 
-- 增加 frozen-backbone + linear head baseline
-- 比较 LoRA rank `r = 2, 4, 8, 16`
-- 比较只适配 Query、只适配 Value 与同时适配 Query/Value
-- 增加全参数微调结果
-- 报告多随机种子的均值与标准差
+## Planned Experiments
 
-## 参考资料
+- Frozen backbone with a trainable linear classification head
+- LoRA rank comparison: `r = 2, 4, 8, 16`
+- Query-only, Value-only, and Query-plus-Value LoRA
+- Full-parameter fine-tuning
+- Mean and standard deviation over multiple random seeds
+
+## References
 
 - [An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale](https://arxiv.org/abs/2010.11929)
 - [LoRA: Low-Rank Adaptation of Large Language Models](https://arxiv.org/abs/2106.09685)
 - [Oxford-IIIT Pet Dataset](https://www.robots.ox.ac.uk/~vgg/data/pets/)
-
