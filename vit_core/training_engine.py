@@ -1,4 +1,4 @@
-"""LoRA模型的单epoch训练与完整多epoch训练流程。"""
+"""Training loops shared by all transfer-learning experiments."""
 
 from pathlib import Path
 
@@ -7,7 +7,11 @@ from torch import nn
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 
-from test import load_trainable_checkpoint, test
+from vit_core.checkpoint import (
+    load_trainable_checkpoint,
+    save_trainable_checkpoint,
+)
+from vit_core.evaluation import test
 
 
 def train_one_epoch(
@@ -67,7 +71,7 @@ def train(
     num_epochs: int,
     checkpoint_path: str | Path,
 ) -> list[dict[str, float | int]]:
-    """训练多个epoch，验证并保存验证准确率最高的LoRA与分类头。"""
+    """训练多个epoch，并恢复验证准确率最高的可训练参数。"""
     model.to(device)
     checkpoint_path = Path(checkpoint_path)
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
@@ -109,18 +113,11 @@ def train(
 
         if val_metrics["accuracy"] > best_val_accuracy:
             best_val_accuracy = float(val_metrics["accuracy"])
-            trainable_state = {
-                name: parameter.detach().cpu()
-                for name, parameter in model.named_parameters()
-                if parameter.requires_grad
-            }
-            torch.save(
-                {
-                    "epoch": epoch,
-                    "val_accuracy": best_val_accuracy,
-                    "model_state_dict": trainable_state,
-                },
-                checkpoint_path,
+            save_trainable_checkpoint(
+                model=model,
+                checkpoint_path=checkpoint_path,
+                epoch=epoch,
+                val_accuracy=best_val_accuracy,
             )
 
     load_trainable_checkpoint(model, checkpoint_path)

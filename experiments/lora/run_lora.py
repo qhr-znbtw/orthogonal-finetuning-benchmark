@@ -7,20 +7,21 @@ import torch
 from torch import nn
 from torch.optim import AdamW
 
-from dataset import RANDOM_SEED, build_dataloaders
-from load_pretrained_model import load_pretrained_model
-from test import test
-from train import train
+from experiments.lora.config import (
+    CLASSIFIER_LEARNING_RATE,
+    LORA_LEARNING_RATE,
+    NUM_EPOCHS,
+    WEIGHT_DECAY,
+)
+from experiments.lora.model import ViTForPetClassification
+from vit_core.evaluation import test
+from vit_core.pet_dataset import RANDOM_SEED, build_dataloaders
+from vit_core.pretrained import load_pretrained_vit
+from vit_core.training_engine import train
 
 
-PROJECT_DIR = Path(__file__).parent
-CHECKPOINT_PATH = PROJECT_DIR / "checkpoints" / "best_model.pt"
-
-NUM_EPOCHS = 20
-LORA_LEARNING_RATE = 1e-4
-CLASSIFIER_LEARNING_RATE = 1e-3
-WEIGHT_DECAY = 0.01
-
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+CHECKPOINT_PATH = PROJECT_ROOT / "checkpoints" / "lora" / "best_model.pt"
 
 def set_random_seed(seed: int) -> None:
     """固定Python和PyTorch的随机种子。"""
@@ -60,7 +61,8 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     train_loader, val_loader, test_loader = build_dataloaders()
-    model = load_pretrained_model()
+    model = ViTForPetClassification()
+    load_pretrained_vit(model)
     optimizer = build_optimizer(model)
     criterion = nn.CrossEntropyLoss()
 

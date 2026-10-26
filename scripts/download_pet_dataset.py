@@ -6,7 +6,8 @@ from torchvision.datasets import OxfordIIITPet
 
 
 def main() -> None:
-    data_root = Path(__file__).resolve().parent / "data"
+    project_root = Path(__file__).resolve().parents[1]
+    data_root = project_root / "data"
     data_root.mkdir(parents=True, exist_ok=True)
 
     train_dataset = OxfordIIITPet(

@@ -6,7 +6,8 @@ from huggingface_hub import snapshot_download
 
 
 MODEL_ID = "google/vit-base-patch16-224"
-MODEL_DIR = Path(__file__).parent / "pretrained" / "vit-base-patch16-224"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+MODEL_DIR = PROJECT_ROOT / "pretrained" / "vit-base-patch16-224"
 
 
 def main() -> None:

@@ -6,7 +6,7 @@
 
 在单张 NVIDIA GeForce RTX 4070 Ti SUPER 上训练 20 个 epoch 后，模型在第 9 个 epoch 达到最高验证准确率 95.52%。恢复该最佳检查点后，模型在官方测试集上取得 93.38% 的 Top-1 准确率，正确分类 3426/3669 张图片。完整模型包含 86,122,021 个参数，其中仅 323,365 个参数参与训练，占总参数量约 0.375%；最佳任务检查点大小约 1.25 MB。
 
-当前结果证明了所实现的 ViT-LoRA 迁移流程能够以较少的可训练参数完成有效的细粒度宠物分类。但本报告记录的是单次 LoRA 实验结果，冻结主干只训练分类头的 baseline、不同 LoRA rank 的消融实验以及多随机种子重复实验尚未完成，因此暂时不能据此得出 LoRA 相对其他迁移方法更优的结论。
+当前结果证明了所实现的 ViT-LoRA 迁移流程能够以较少的可训练参数完成有效的细粒度宠物分类。在相同协议下，Linear Probe baseline 的测试准确率为 92.61%，LoRA 在本次单随机种子实验中高出 0.77 个百分点；但不同 LoRA rank 的消融实验以及多随机种子重复实验尚未完成，因此暂时不能据此断言这一优势具有统计稳定性。
 
 ## 1. 研究任务
 
@@ -285,7 +285,7 @@ LoRA 和分类头采用不同学习率：随机初始化的分类头需要更快
 最佳检查点保存在：
 
 ```text
-D:\LoRA\checkpoints\best_model.pt
+D:\ViT-Transfer-Learning\checkpoints\lora\best_model.pt
 ```
 
 文件大小为 1,309,922 字节，约 1.25 MB。
@@ -324,10 +324,10 @@ D:\LoRA\checkpoints\best_model.pt
 
 ## 9. 局限性
 
-1. **缺少 baseline**：尚未完成冻结 backbone、只训练分类头的对照实验。
-2. **只有单次运行**：当前结果来自随机种子 42 的一次实验，没有报告均值和标准差。
-3. **缺少 rank 消融**：尚未比较不同低秩维度。
-4. **缺少注入位置消融**：尚未比较仅 Query、Query+Value、Query+Key+Value 或 Attention+MLP。
+1. **只有单次对比运行**：LoRA 与 Linear Probe 当前都只使用随机种子 42，没有报告均值和标准差。
+2. **缺少 rank 消融**：尚未比较不同低秩维度。
+3. **缺少注入位置消融**：尚未比较仅 Query、Query+Value、Query+Key+Value 或 Attention+MLP。
+4. **缺少 OFT**：当前还不能形成完整的四方法比较。
 5. **训练策略较基础**：未使用学习率调度、早停、label smoothing 等技术。
 6. **缺少类别级分析**：尚未统计每类准确率、混淆矩阵和典型错误案例。
 7. **任务检查点依赖基础权重**：1.25 MB 检查点只包含 LoRA 与分类头，恢复模型时仍需加载相同的 ViT-B/16 预训练权重。
@@ -336,42 +336,46 @@ D:\LoRA\checkpoints\best_model.pt
 
 建议按照以下顺序继续：
 
-1. **Linear probing baseline**：冻结全部 ViT backbone，只训练相同的 37 类分类头。
+1. **OFT**：加入保持正交结构的参数高效微调方法。
 2. **LoRA rank 消融**：比较 \(r\in\{2,4,8,16\}\)，保持其他条件不变。
 3. **LoRA 注入位置消融**：比较 Query、Query+Value、Query+Key+Value。
 4. **重复实验**：至少使用 3 个随机种子，报告测试准确率均值和标准差。
 5. **类别级评估**：生成混淆矩阵、每类准确率和错误样本分析。
-6. **可选全参数微调**：在显存允许的条件下增加 full fine-tuning 参考结果。
 
-其中最重要的下一步是 linear probing baseline。只有将其与当前 93.38% 的 LoRA 结果在同一数据划分和训练协议下比较，才能量化 LoRA 带来的实际增益。
+Linear Probe 与 Full Fine-tuning 已经完成。下一步应加入 OFT，形成四种迁移策略的统一比较；随后再进行 LoRA rank 和注入位置消融。
 
 ## 11. 项目代码结构与复现
 
 | 文件 | 功能 |
 |---|---|
-| `download_pet_dataset.py` | 下载 Oxford-IIIT Pet 数据集 |
-| `download_pretrained_model.py` | 下载 ViT-B/16 预训练权重 |
-| `net.py` | ViT、LoRA和分类头结构 |
-| `load_pretrained_model.py` | 映射并加载预训练权重 |
-| `dataset.py` | 数据划分、预处理和 DataLoader |
-| `train.py` | 单 epoch 与多 epoch 训练流程 |
-| `test.py` | 验证、测试与任务检查点加载 |
-| `main.py` | 完整实验入口 |
+| `scripts/download_pet_dataset.py` | 下载 Oxford-IIIT Pet 数据集 |
+| `scripts/download_pretrained_model.py` | 下载 ViT-B/16 预训练权重 |
+| `experiments/lora/model.py` | ViT、LoRA和分类头结构 |
+| `vit_core/pretrained.py` | 统一映射并加载预训练权重 |
+| `vit_core/pet_dataset.py` | 数据划分、预处理和 DataLoader |
+| `vit_core/training_engine.py` | 单 epoch 与多 epoch 训练流程 |
+| `vit_core/evaluation.py` | 验证、测试与任务检查点加载 |
+| `experiments/lora/run_lora.py` | 完整实验入口 |
+| `tests/test_lora.py` | 不启动完整训练的端到端冒烟测试 |
 
 正式运行命令：
 
 ```powershell
-E:\anaconda\python.exe D:\LoRA\main.py
+cd D:\ViT-Transfer-Learning
+E:\anaconda\python.exe -m experiments.lora.run_lora
 ```
 
 恢复最佳模型并进行测试时，需要先构造并加载预训练模型，再加载任务检查点：
 
 ```python
-from load_pretrained_model import load_pretrained_model
-from test import load_trainable_checkpoint
+from experiments.lora.model import ViTForPetClassification
+from experiments.lora.run_lora import CHECKPOINT_PATH
+from vit_core.checkpoint import load_trainable_checkpoint
+from vit_core.pretrained import load_pretrained_vit
 
-model = load_pretrained_model()
-load_trainable_checkpoint(model, "checkpoints/best_model.pt")
+model = ViTForPetClassification()
+load_pretrained_vit(model)
+load_trainable_checkpoint(model, CHECKPOINT_PATH)
 ```
 
 ## 参考资料

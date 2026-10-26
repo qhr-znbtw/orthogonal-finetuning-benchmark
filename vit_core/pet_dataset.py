@@ -7,10 +7,10 @@ import torch
 from torch.utils.data import DataLoader, Subset
 from torchvision.datasets import OxfordIIITPet
 
-from net import build_image_transform
+from vit_core.vit_backbone import build_image_transform
 
 
-DATA_DIR = Path(__file__).parent / "data"
+DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 TRAIN_BATCH_SIZE = 32
 EVAL_BATCH_SIZE = 64
 NUM_WORKERS = 4
@@ -24,6 +24,9 @@ def stratified_split(
     seed: int = RANDOM_SEED,
 ) -> tuple[list[int], list[int]]:
     """按类别分别划分索引，使训练集与验证集保持类别平衡。"""
+    if not 0.0 < val_ratio < 1.0:
+        raise ValueError("val_ratio必须位于0和1之间。")
+
     indices_by_class: dict[int, list[int]] = defaultdict(list)
     for index, label in enumerate(labels):
         indices_by_class[label].append(index)
@@ -43,10 +46,13 @@ def stratified_split(
     return train_indices, val_indices
 
 
-def build_datasets() -> tuple[Subset, Subset, OxfordIIITPet]:
+def build_datasets(
+    data_dir: str | Path = DATA_DIR,
+) -> tuple[Subset, Subset, OxfordIIITPet]:
     """构建训练集、验证集和官方测试集。"""
+    data_dir = Path(data_dir)
     index_source = OxfordIIITPet(
-        root=DATA_DIR,
+        root=data_dir,
         split="trainval",
         target_types="category",
         download=False,
@@ -54,21 +60,21 @@ def build_datasets() -> tuple[Subset, Subset, OxfordIIITPet]:
     train_indices, val_indices = stratified_split(index_source._labels)
 
     train_source = OxfordIIITPet(
-        root=DATA_DIR,
+        root=data_dir,
         split="trainval",
         target_types="category",
         transform=build_image_transform(train=True),
         download=False,
     )
     val_source = OxfordIIITPet(
-        root=DATA_DIR,
+        root=data_dir,
         split="trainval",
         target_types="category",
         transform=build_image_transform(train=False),
         download=False,
     )
     test_dataset = OxfordIIITPet(
-        root=DATA_DIR,
+        root=data_dir,
         split="test",
         target_types="category",
         transform=build_image_transform(train=False),
@@ -80,35 +86,45 @@ def build_datasets() -> tuple[Subset, Subset, OxfordIIITPet]:
     return train_dataset, val_dataset, test_dataset
 
 
-def build_dataloaders() -> tuple[DataLoader, DataLoader, DataLoader]:
+def build_dataloaders(
+    data_dir: str | Path = DATA_DIR,
+    train_batch_size: int = TRAIN_BATCH_SIZE,
+    eval_batch_size: int = EVAL_BATCH_SIZE,
+    num_workers: int = NUM_WORKERS,
+) -> tuple[DataLoader, DataLoader, DataLoader]:
     """返回训练、验证和测试DataLoader。"""
-    train_dataset, val_dataset, test_dataset = build_datasets()
+    if train_batch_size <= 0 or eval_batch_size <= 0:
+        raise ValueError("batch size必须为正整数。")
+    if num_workers < 0:
+        raise ValueError("num_workers不能为负数。")
+
+    train_dataset, val_dataset, test_dataset = build_datasets(data_dir=data_dir)
     pin_memory = torch.cuda.is_available()
 
     train_loader = DataLoader(
         train_dataset,
-        batch_size=TRAIN_BATCH_SIZE,
+        batch_size=train_batch_size,
         shuffle=True,
-        num_workers=NUM_WORKERS,
+        num_workers=num_workers,
         pin_memory=pin_memory,
-        persistent_workers=NUM_WORKERS > 0,
+        persistent_workers=num_workers > 0,
         generator=torch.Generator().manual_seed(RANDOM_SEED),
     )
     val_loader = DataLoader(
         val_dataset,
-        batch_size=EVAL_BATCH_SIZE,
+        batch_size=eval_batch_size,
         shuffle=False,
-        num_workers=NUM_WORKERS,
+        num_workers=num_workers,
         pin_memory=pin_memory,
-        persistent_workers=NUM_WORKERS > 0,
+        persistent_workers=num_workers > 0,
     )
     test_loader = DataLoader(
         test_dataset,
-        batch_size=EVAL_BATCH_SIZE,
+        batch_size=eval_batch_size,
         shuffle=False,
-        num_workers=NUM_WORKERS,
+        num_workers=num_workers,
         pin_memory=pin_memory,
-        persistent_workers=NUM_WORKERS > 0,
+        persistent_workers=num_workers > 0,
     )
 
     return train_loader, val_loader, test_loader
