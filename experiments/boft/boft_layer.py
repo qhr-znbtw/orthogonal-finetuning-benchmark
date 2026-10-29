@@ -20,8 +20,8 @@ def _build_coordinate_permutation(
 
     if num_micro_blocks % group_size != 0:
         raise ValueError(
-            f"第{factor_index + 1}个factor需要micro-block数量"
-            f"{num_micro_blocks}能被{group_size}整除。"
+            f"Factor {factor_index + 1} requires {num_micro_blocks} "
+            f"micro-blocks to be divisible by {group_size}."
         )
 
     micro_block_order: list[int] = []
@@ -41,12 +41,7 @@ def _build_coordinate_permutation(
 
 
 class BOFTLinear(nn.Module):
-    """Frozen linear layer preceded by a trainable orthogonal butterfly map.
-
-    The adapted PyTorch weight is ``W' = W R^T``.  Instead of materializing
-    the dense ``R``, the forward pass applies its sparse factors to the last
-    feature dimension and then calls the frozen base linear layer.
-    """
+    """Frozen linear layer preceded by trainable orthogonal butterfly maps."""
 
     def __init__(
         self,
@@ -59,38 +54,25 @@ class BOFTLinear(nn.Module):
     ) -> None:
         super().__init__()
         if block_size <= 0 or block_size % 2 != 0:
-            raise ValueError("BOFT block_size必须是正偶数。")
+            raise ValueError("BOFT block_size must be a positive even integer.")
         if in_features % block_size != 0:
-            raise ValueError("in_features必须能被block_size整除。")
+            raise ValueError("in_features must be divisible by block_size.")
         if num_factors <= 0:
-            raise ValueError("num_factors必须是正整数。")
+            raise ValueError("num_factors must be positive.")
 
         self.in_features = in_features
         self.out_features = out_features
         self.block_size = block_size
         self.num_factors = num_factors
         self.num_blocks = in_features // block_size
-
-        # The base layer receives pretrained weights and remains frozen.
         self.base = nn.Linear(in_features, out_features, bias=bias)
 
-        # Store only the independent entries of each skew-symmetric matrix.
-        # This represents exactly the same Q=A-A^T family without keeping the
-        # symmetric part of A, whose gradient would always be zero.
         independent_entries = block_size * (block_size - 1) // 2
         self.skew_parameters = nn.Parameter(
-            torch.zeros(
-                num_factors,
-                self.num_blocks,
-                independent_entries,
-            )
+            torch.zeros(num_factors, self.num_blocks, independent_entries)
         )
 
-        upper_row, upper_col = torch.triu_indices(
-            block_size,
-            block_size,
-            offset=1,
-        )
+        upper_row, upper_col = torch.triu_indices(block_size, block_size, offset=1)
         self.register_buffer("upper_row", upper_row, persistent=False)
         self.register_buffer("upper_col", upper_col, persistent=False)
 
@@ -117,9 +99,10 @@ class BOFTLinear(nn.Module):
             torch.stack(inverse_permutations),
             persistent=False,
         )
+        self._rotation_cache: torch.Tensor | None = None
 
     def skew_matrices(self) -> torch.Tensor:
-        """Build all trainable skew-symmetric block generators."""
+        """Build all skew-symmetric block generators."""
         shape = (
             self.num_factors,
             self.num_blocks,
@@ -132,8 +115,9 @@ class BOFTLinear(nn.Module):
         return skew
 
     def orthogonal_blocks(self) -> torch.Tensor:
-        """Map every skew block to an orthogonal block with the Cayley map."""
-        # Small matrix solves are kept in FP32 even during BF16 autocast.
+        """Map every skew block through the Cayley transform."""
+        if self._rotation_cache is not None:
+            return self._rotation_cache
         with torch.autocast(
             device_type=self.skew_parameters.device.type,
             enabled=False,
@@ -144,21 +128,35 @@ class BOFTLinear(nn.Module):
                 dtype=skew.dtype,
                 device=skew.device,
             )
-            # solve(I + Q, I - Q) = (I + Q)^-1 (I - Q).
-            # The two polynomial factors commute, so this is the Cayley form
-            # (I - Q)(I + Q)^-1 without an explicit matrix inverse.
             return torch.linalg.solve(identity + skew, identity - skew)
+
+    def set_rotation_cache(self, rotations: torch.Tensor) -> None:
+        """Temporarily reuse rotations from one model-level batched solve."""
+        expected_shape = (
+            self.num_factors,
+            self.num_blocks,
+            self.block_size,
+            self.block_size,
+        )
+        if rotations.shape != expected_shape:
+            raise ValueError(
+                f"BOFT rotation cache must have shape {expected_shape}, "
+                f"got {tuple(rotations.shape)}."
+            )
+        self._rotation_cache = rotations
+
+    def clear_rotation_cache(self) -> None:
+        self._rotation_cache = None
 
     def rotate_features(self, inputs: torch.Tensor) -> torch.Tensor:
         """Apply all sparse butterfly factors to the final tensor axis."""
         if inputs.shape[-1] != self.in_features:
             raise ValueError(
-                f"最后一维应为{self.in_features}，实际为{inputs.shape[-1]}。"
+                f"Expected final dimension {self.in_features}, got {inputs.shape[-1]}."
             )
 
         rotations = self.orthogonal_blocks().to(dtype=inputs.dtype)
         outputs = inputs
-
         for factor_index in range(self.num_factors):
             order = self.permutations[factor_index]
             inverse = self.inverse_permutations[factor_index]
@@ -173,13 +171,10 @@ class BOFTLinear(nn.Module):
                 blocks,
                 rotations[factor_index],
             )
-            permuted = rotated_blocks.flatten(-2)
-            outputs = permuted.index_select(-1, inverse)
-
+            outputs = rotated_blocks.flatten(-2).index_select(-1, inverse)
         return outputs
 
     def dense_orthogonal_matrix(self) -> torch.Tensor:
-        """Materialize the dense R for tests and analysis, not training."""
         identity = torch.eye(
             self.in_features,
             dtype=self.skew_parameters.dtype,
@@ -188,13 +183,11 @@ class BOFTLinear(nn.Module):
         return self.rotate_features(identity)
 
     def effective_weight(self) -> torch.Tensor:
-        """Return the explicit adapted weight ``W R^T`` for verification."""
         rotation = self.dense_orthogonal_matrix()
         return self.base.weight @ rotation.transpose(0, 1)
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        rotated_inputs = self.rotate_features(inputs)
-        return F.linear(rotated_inputs, self.base.weight, self.base.bias)
+        return F.linear(self.rotate_features(inputs), self.base.weight, self.base.bias)
 
     def extra_repr(self) -> str:
         return (

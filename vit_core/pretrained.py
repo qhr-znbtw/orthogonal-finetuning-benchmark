@@ -1,4 +1,3 @@
-
 """Load Hugging Face ViT weights into the local shared architecture."""
 
 from __future__ import annotations
@@ -13,7 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_WEIGHTS_PATH = (
     PROJECT_ROOT
     / "pretrained"
-    / "vit-base-patch16-224"
+    / "vit-base-patch16-224-in21k"
     / "model.safetensors"
 )
 
@@ -27,47 +26,43 @@ def _projection_parameter_prefix(
         return module_prefix
     if f"{module_prefix}.base.weight" in model_state_keys:
         return f"{module_prefix}.base"
-    raise KeyError(f"无法定位投影层参数：{module_prefix}")
+    raise KeyError(f"Cannot locate projection parameters: {module_prefix}")
 
 
-def build_vit_weight_map(model: nn.Module) -> dict[str, str]:
-    """Map local backbone parameters to google/vit-base-patch16-224 names."""
+def _detect_source_prefix(source_keys: set[str]) -> str:
+    """Support both ViTModel and ViTForImageClassification checkpoints."""
+    if "embeddings.cls_token" in source_keys:
+        return ""
+    if "vit.embeddings.cls_token" in source_keys:
+        return "vit."
+    raise RuntimeError("The checkpoint does not look like a Hugging Face ViT model.")
+
+
+def build_vit_weight_map(
+    model: nn.Module,
+    source_prefix: str = "",
+) -> dict[str, str]:
+    """Map local backbone parameters to Hugging Face ViT parameter names."""
     if not hasattr(model, "config") or not hasattr(model.config, "num_layers"):
-        raise TypeError("模型必须具有包含num_layers的ViT config。")
+        raise TypeError("The model must expose a ViT config with num_layers.")
 
     model_state_keys = set(model.state_dict())
     weight_map = {
-        "embedding.cls_token": "vit.embeddings.cls_token",
-        "embedding.position_embedding": "vit.embeddings.position_embeddings",
-        "embedding.patch_embedding.projection.weight": (
-            "vit.embeddings.patch_embeddings.projection.weight"
-        ),
-        "embedding.patch_embedding.projection.bias": (
-            "vit.embeddings.patch_embeddings.projection.bias"
-        ),
-        "head.norm.weight": "vit.layernorm.weight",
-        "head.norm.bias": "vit.layernorm.bias",
+        "embedding.cls_token": f"{source_prefix}embeddings.cls_token",
+        "embedding.position_embedding": f"{source_prefix}embeddings.position_embeddings",
+        "embedding.patch_embedding.projection.weight": f"{source_prefix}embeddings.patch_embeddings.projection.weight",
+        "embedding.patch_embedding.projection.bias": f"{source_prefix}embeddings.patch_embeddings.projection.bias",
+        "head.norm.weight": f"{source_prefix}layernorm.weight",
+        "head.norm.bias": f"{source_prefix}layernorm.bias",
     }
 
     for index in range(model.config.num_layers):
         ours = f"encoder.blocks.{index}"
-        source = f"vit.encoder.layer.{index}"
-        query = _projection_parameter_prefix(
-            model_state_keys,
-            f"{ours}.attention.query",
-        )
-        key = _projection_parameter_prefix(
-            model_state_keys,
-            f"{ours}.attention.key",
-        )
-        value = _projection_parameter_prefix(
-            model_state_keys,
-            f"{ours}.attention.value",
-        )
-        output = _projection_parameter_prefix(
-            model_state_keys,
-            f"{ours}.attention.output",
-        )
+        source = f"{source_prefix}encoder.layer.{index}"
+        query = _projection_parameter_prefix(model_state_keys, f"{ours}.attention.query")
+        key = _projection_parameter_prefix(model_state_keys, f"{ours}.attention.key")
+        value = _projection_parameter_prefix(model_state_keys, f"{ours}.attention.value")
+        output = _projection_parameter_prefix(model_state_keys, f"{ours}.attention.output")
 
         weight_map.update(
             {
@@ -92,7 +87,7 @@ def build_vit_weight_map(model: nn.Module) -> dict[str, str]:
 
     missing_targets = set(weight_map) - model_state_keys
     if missing_targets:
-        raise RuntimeError(f"权重映射包含模型中不存在的参数：{missing_targets}")
+        raise RuntimeError(f"Weight map contains missing model keys: {missing_targets}")
     return weight_map
 
 
@@ -100,20 +95,21 @@ def load_pretrained_vit(
     model: nn.Module,
     weights_path: str | Path = DEFAULT_WEIGHTS_PATH,
 ) -> int:
-    """Load the shared ViT backbone and return the number of loaded tensors."""
+    """Load the shared ViT backbone and return the tensor count."""
     weights_path = Path(weights_path)
     if not weights_path.is_file():
         raise FileNotFoundError(
-            f"找不到预训练权重：{weights_path}\n"
-            "请先运行 python -m scripts.download_pretrained_model。"
+            f"Missing pretrained weights: {weights_path}\n"
+            "Run `python -m scripts.download_pretrained_model` first."
         )
 
     source_state = load_file(weights_path, device="cpu")
-    weight_map = build_vit_weight_map(model)
+    source_prefix = _detect_source_prefix(set(source_state))
+    weight_map = build_vit_weight_map(model, source_prefix=source_prefix)
 
     missing_source_keys = set(weight_map.values()) - set(source_state)
     if missing_source_keys:
-        raise RuntimeError(f"预训练文件缺少参数：{missing_source_keys}")
+        raise RuntimeError(f"Checkpoint is missing parameters: {missing_source_keys}")
 
     mapped_state = {
         target_name: source_state[source_name]
@@ -124,9 +120,7 @@ def load_pretrained_vit(
     expected_missing = set(model.state_dict()) - set(mapped_state)
     if set(missing_keys) != expected_missing or unexpected_keys:
         raise RuntimeError(
-            "预训练权重没有按预期加载。\n"
-            f"缺失参数：{missing_keys}\n"
-            f"多余参数：{unexpected_keys}"
+            "Pretrained weights did not load as expected.\n"
+            f"Missing: {missing_keys}\nUnexpected: {unexpected_keys}"
         )
-
     return len(mapped_state)

@@ -1,0 +1,7 @@
+"""Configuration for the Mini-VTAB ViT-B/16 GOFT experiments."""
+
+NUM_EPOCHS = 100
+WARMUP_EPOCHS = 10
+GOFT_LEARNING_RATE = 1e-3
+CLASSIFIER_LEARNING_RATE = 1e-3
+WEIGHT_DECAY = 1e-4

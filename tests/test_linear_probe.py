@@ -1,61 +1,45 @@
-"""Fast smoke test for the linear-probe experiment."""
+"""Smoke tests for the Mini-VTAB frozen-backbone baseline."""
 
 import torch
-from torch import nn
-from torch.utils.data import DataLoader, TensorDataset
 
 from experiments.linear_probe.model import ViTLinearProbe
-from experiments.linear_probe.run_linear_probe import CHECKPOINT_PATH, build_optimizer
-from vit_core.checkpoint import load_trainable_checkpoint
-from vit_core.pet_dataset import build_datasets
+from experiments.linear_probe.run_linear_probe import build_optimizer
+from vit_core.mini_vtab import TASK_SPECS, build_datasets
 from vit_core.pretrained import load_pretrained_vit
-from vit_core.training_engine import train_one_epoch
 
 
-EXPECTED_TRAINABLE_PARAMETERS = 28_453
-
-
-def test_linear_probe_workflow() -> None:
-    _, _, test_dataset = build_datasets()
-    model = ViTLinearProbe()
-    load_pretrained_vit(model)
-    model.set_trainable_parameters()
-
+def test_pretrained_linear_probe() -> None:
+    model = ViTLinearProbe(num_classes=47)
+    assert load_pretrained_vit(model) == 198
     trainable_names = {
-        name
-        for name, parameter in model.named_parameters()
-        if parameter.requires_grad
+        name for name, parameter in model.named_parameters() if parameter.requires_grad
     }
-    assert trainable_names == {
-        "head.classifier.weight",
-        "head.classifier.bias",
-    }
+    assert trainable_names == {"head.classifier.weight", "head.classifier.bias"}
     assert sum(
         parameter.numel()
         for parameter in model.parameters()
         if parameter.requires_grad
-    ) == EXPECTED_TRAINABLE_PARAMETERS
+    ) == 36_143
+    assert len(build_optimizer(model).param_groups) == 1
 
-    checkpoint = load_trainable_checkpoint(model, CHECKPOINT_PATH)
-    assert checkpoint["epoch"] == 16
+    with torch.inference_mode():
+        logits = model(torch.randn(1, 3, 224, 224))
+    assert logits.shape == (1, 47)
 
-    image, label = test_dataset[0]
-    dataloader = DataLoader(
-        TensorDataset(image.unsqueeze(0), torch.tensor([label])),
-        batch_size=1,
-    )
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.to(device)
-    metrics = train_one_epoch(
-        model=model,
-        dataloader=dataloader,
-        optimizer=build_optimizer(model),
-        criterion=nn.CrossEntropyLoss(),
-        device=device,
-    )
-    assert torch.isfinite(torch.tensor(metrics["loss"]))
+
+def test_dataset_metadata() -> None:
+    assert [TASK_SPECS[name].num_classes for name in TASK_SPECS] == [47, 10, 16]
+    for task_name, expected_test_size in (("dtd", 1880), ("eurosat", 5400)):
+        train_dataset, val_dataset, test_dataset = build_datasets(task_name)
+        assert len(train_dataset) == 800
+        assert len(val_dataset) == 200
+        assert len(test_dataset) == expected_test_size
+        image, label = train_dataset[0]
+        assert image.shape == (3, 224, 224)
+        assert 0 <= label < TASK_SPECS[task_name].num_classes
 
 
 if __name__ == "__main__":
-    test_linear_probe_workflow()
-    print("Linear-probe workflow smoke test passed.")
+    test_pretrained_linear_probe()
+    test_dataset_metadata()
+    print("Mini-VTAB linear-probe smoke tests passed.")

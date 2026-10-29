@@ -1,10 +1,9 @@
+"""Configuration for the Mini-VTAB ViT-B/16 LoRA experiments."""
 
-"""Configuration for the ViT-B/16 LoRA experiment."""
-
-NUM_CLASSES = 37
 LORA_RANK = 8
 LORA_ALPHA = 8.0
-NUM_EPOCHS = 20
+NUM_EPOCHS = 100
+WARMUP_EPOCHS = 10
 LORA_LEARNING_RATE = 1e-4
 CLASSIFIER_LEARNING_RATE = 1e-3
-WEIGHT_DECAY = 0.01
+WEIGHT_DECAY = 1e-4

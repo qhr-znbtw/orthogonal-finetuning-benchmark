@@ -1,77 +1,60 @@
-
-"""Fast end-to-end smoke test for the existing ViT-LoRA workflow."""
+"""Smoke tests for the Mini-VTAB Query/Value LoRA workflow."""
 
 import torch
-from torch import nn
-from torch.utils.data import DataLoader, TensorDataset
 
-from experiments.lora.model import ViTForPetClassification
-from experiments.lora.run_lora import CHECKPOINT_PATH, build_optimizer
-from vit_core.checkpoint import load_trainable_checkpoint
-from vit_core.evaluation import test as evaluate
-from vit_core.pet_dataset import build_datasets
+from experiments.lora.config import (
+    CLASSIFIER_LEARNING_RATE,
+    LORA_LEARNING_RATE,
+    LORA_RANK,
+)
+from experiments.lora.lora_layer import LoRALinear
+from experiments.lora.model import ViTLoRAClassifier
+from experiments.lora.run_lora import build_optimizer, build_scheduler
 from vit_core.pretrained import load_pretrained_vit
-from vit_core.training_engine import train_one_epoch
 
 
-EXPECTED_TRAINABLE_PARAMETERS = 323_365
-NUM_CLASSES = 37
+def test_lora_layer_starts_as_base_layer() -> None:
+    layer = LoRALinear(5, 3, rank=2, alpha=2.0)
+    inputs = torch.randn(4, 5)
+    torch.testing.assert_close(layer(inputs), layer.base(inputs))
 
 
-def test_lora_workflow() -> None:
-    """Load data, pretrained weights and the saved adapter, then run one image."""
-    train_dataset, val_dataset, test_dataset = build_datasets()
-    assert (len(train_dataset), len(val_dataset), len(test_dataset)) == (
-        2_944,
-        736,
-        3_669,
-    )
+def test_lora_model_and_optimizer() -> None:
+    num_classes = 10
+    model = ViTLoRAClassifier(num_classes=num_classes)
+    loaded_tensors = load_pretrained_vit(model)
+    assert loaded_tensors == 198
+    assert model.head.classifier.out_features == num_classes
 
-    model = ViTForPetClassification()
-    load_pretrained_vit(model)
+    lora_parameters = 12 * 2 * 2 * 768 * LORA_RANK
+    classifier_parameters = 768 * num_classes + num_classes
     trainable_parameters = sum(
         parameter.numel()
         for parameter in model.parameters()
         if parameter.requires_grad
     )
-    assert trainable_parameters == EXPECTED_TRAINABLE_PARAMETERS
-    assert model.head.classifier.out_features == NUM_CLASSES
+    assert trainable_parameters == lora_parameters + classifier_parameters
+
+    trainable_names = {
+        name for name, parameter in model.named_parameters() if parameter.requires_grad
+    }
+    assert all(
+        ".lora_a." in name
+        or ".lora_b." in name
+        or name.startswith("head.classifier.")
+        for name in trainable_names
+    )
 
     optimizer = build_optimizer(model)
-    assert len(optimizer.param_groups) == 2
-
-    checkpoint = load_trainable_checkpoint(model, CHECKPOINT_PATH)
-    assert "model_state_dict" in checkpoint
-
-    image, label = test_dataset[0]
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.to(device)
-
-    one_sample_loader = DataLoader(
-        TensorDataset(image.unsqueeze(0), torch.tensor([label])),
-        batch_size=1,
-    )
-    criterion = nn.CrossEntropyLoss()
-    train_metrics = train_one_epoch(
-        model=model,
-        dataloader=one_sample_loader,
-        optimizer=optimizer,
-        criterion=criterion,
-        device=device,
-    )
-    assert torch.isfinite(torch.tensor(train_metrics["loss"]))
-
-    eval_metrics = evaluate(
-        model=model,
-        dataloader=one_sample_loader,
-        criterion=criterion,
-        device=device,
-    )
-
-    assert eval_metrics["total"] == 1
-    assert 0.0 <= eval_metrics["accuracy"] <= 1.0
+    assert [group["lr"] for group in optimizer.param_groups] == [
+        LORA_LEARNING_RATE,
+        CLASSIFIER_LEARNING_RATE,
+    ]
+    scheduler = build_scheduler(optimizer, num_epochs=100, warmup_epochs=10)
+    assert scheduler is not None
 
 
 if __name__ == "__main__":
-    test_lora_workflow()
-    print("LoRA workflow smoke test passed.")
+    test_lora_layer_starts_as_base_layer()
+    test_lora_model_and_optimizer()
+    print("Mini-VTAB LoRA smoke tests passed.")

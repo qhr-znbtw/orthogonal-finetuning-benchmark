@@ -5,12 +5,10 @@ from pathlib import Path
 import torch
 from torch import nn
 from torch.optim import Optimizer
+from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import DataLoader
 
-from vit_core.checkpoint import (
-    load_trainable_checkpoint,
-    save_trainable_checkpoint,
-)
+from vit_core.checkpoint import load_trainable_checkpoint, save_trainable_checkpoint
 from vit_core.evaluation import test
 
 
@@ -21,19 +19,16 @@ def train_one_epoch(
     criterion: nn.Module,
     device: torch.device,
 ) -> dict[str, float]:
-    """训练一个epoch，返回按样本统计的平均loss和accuracy。"""
+    """Train one epoch and return sample-weighted loss and accuracy."""
     model.train()
-
     total_loss = 0.0
     total_correct = 0
     total_samples = 0
-
     use_bf16 = device.type == "cuda" and torch.cuda.is_bf16_supported()
 
     for images, labels in dataloader:
         images = images.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
-
         optimizer.zero_grad(set_to_none=True)
 
         with torch.autocast(
@@ -53,8 +48,7 @@ def train_one_epoch(
         total_samples += batch_size
 
     if total_samples == 0:
-        raise ValueError("训练DataLoader中没有样本。")
-
+        raise ValueError("The training DataLoader is empty.")
     return {
         "loss": total_loss / total_samples,
         "accuracy": total_correct / total_samples,
@@ -70,8 +64,9 @@ def train(
     device: torch.device,
     num_epochs: int,
     checkpoint_path: str | Path,
+    scheduler: LRScheduler | None = None,
 ) -> list[dict[str, float | int]]:
-    """训练多个epoch，并恢复验证准确率最高的可训练参数。"""
+    """Train fixed epochs and restore the best validation checkpoint."""
     model.to(device)
     checkpoint_path = Path(checkpoint_path)
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
@@ -80,6 +75,7 @@ def train(
     best_val_accuracy = -1.0
 
     for epoch in range(1, num_epochs + 1):
+        learning_rate = float(optimizer.param_groups[0]["lr"])
         train_metrics = train_one_epoch(
             model=model,
             dataloader=train_loader,
@@ -96,6 +92,7 @@ def train(
 
         epoch_metrics = {
             "epoch": epoch,
+            "learning_rate": learning_rate,
             "train_loss": train_metrics["loss"],
             "train_accuracy": train_metrics["accuracy"],
             "val_loss": val_metrics["loss"],
@@ -104,7 +101,8 @@ def train(
         history.append(epoch_metrics)
 
         print(
-            f"Epoch {epoch:02d}/{num_epochs:02d} | "
+            f"Epoch {epoch:03d}/{num_epochs:03d} | "
+            f"lr {learning_rate:.2e} | "
             f"train loss {train_metrics['loss']:.4f}, "
             f"train acc {train_metrics['accuracy']:.4f} | "
             f"val loss {val_metrics['loss']:.4f}, "
@@ -119,6 +117,8 @@ def train(
                 epoch=epoch,
                 val_accuracy=best_val_accuracy,
             )
+        if scheduler is not None:
+            scheduler.step()
 
     load_trainable_checkpoint(model, checkpoint_path)
     model.to(device)

@@ -1,22 +1,21 @@
-
-"""ViT-B/16 classifier with block OFT in Query and Value."""
+"""ViT-B/16 classifier with block-diagonal OFT in Query and Value."""
 
 from functools import partial
 
 import torch
 
-from experiments.oft.config import NUM_CLASSES, OFT_BLOCK_SIZE
+from experiments.oft.config import OFT_BLOCK_SIZE
 from experiments.oft.oft_layer import BlockOFTLinear
 from vit_core.vit_backbone import VIT_BASE_PATCH16_224, ViTForImageClassification
 
 
-class ViTOFTForPetClassification(ViTForImageClassification):
-    """Freeze ViT-B/16 and train block OFT on all Query/Value projections."""
+class ViTOFTClassifier(ViTForImageClassification):
+    """Freeze ViT-B/16 and train one block-OFT factor per Q/V projection."""
 
-    def __init__(self) -> None:
+    def __init__(self, num_classes: int) -> None:
         oft_factory = partial(BlockOFTLinear, block_size=OFT_BLOCK_SIZE)
         super().__init__(
-            num_classes=NUM_CLASSES,
+            num_classes=num_classes,
             config=VIT_BASE_PATCH16_224,
             query_factory=oft_factory,
             value_factory=oft_factory,
@@ -24,7 +23,7 @@ class ViTOFTForPetClassification(ViTForImageClassification):
         self.set_trainable_parameters()
 
     def set_trainable_parameters(self) -> None:
-        """Train only OFT skew coordinates and the new classifier."""
+        """Train only OFT skew coordinates and the task-specific classifier."""
         for parameter in self.parameters():
             parameter.requires_grad = False
 
@@ -43,10 +42,10 @@ class ViTOFTForPetClassification(ViTForImageClassification):
         ]
 
     def _cache_all_oft_rotations(self) -> list[BlockOFTLinear]:
-        """Evaluate every Q/V Cayley map in one batched solver call."""
+        """Evaluate all Q/V Cayley maps with one batched linear solve."""
         layers = self._oft_layers()
         if not layers:
-            raise RuntimeError("模型中没有BlockOFTLinear层。")
+            raise RuntimeError("The model has no BlockOFTLinear layers.")
 
         with torch.autocast(
             device_type=layers[0].skew_parameters.device.type,
@@ -68,7 +67,7 @@ class ViTOFTForPetClassification(ViTForImageClassification):
         return layers
 
     def forward(self, images: torch.Tensor) -> torch.Tensor:
-        """Share one differentiable batched Cayley solve across all OFT layers."""
+        """Reuse the batched Cayley result throughout one model forward."""
         layers = self._cache_all_oft_rotations()
         try:
             return super().forward(images)

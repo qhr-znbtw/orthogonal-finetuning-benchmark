@@ -1,13 +1,13 @@
-"""下载本项目需要的ViT-B/16预训练文件。"""
+"""Download the ImageNet-21k supervised ViT-B/16 backbone."""
 
 from pathlib import Path
 
 from huggingface_hub import snapshot_download
 
 
-MODEL_ID = "google/vit-base-patch16-224"
+MODEL_ID = "google/vit-base-patch16-224-in21k"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-MODEL_DIR = PROJECT_ROOT / "pretrained" / "vit-base-patch16-224"
+MODEL_DIR = PROJECT_ROOT / "pretrained" / "vit-base-patch16-224-in21k"
 
 
 def main() -> None:

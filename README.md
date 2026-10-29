@@ -1,6 +1,20 @@
-# ViT Transfer Learning for Oxford-IIIT Pet Classification
+# ViT Transfer Learning Benchmark
 
-A compact, from-scratch comparison of transfer-learning strategies for fine-grained image classification. The project adapts an ImageNet-pretrained ViT-B/16 to the 37-class Oxford-IIIT Pet dataset using Linear Probe, LoRA, block OFT, BOFT, and Full Fine-tuning.
+A compact, from-scratch comparison of transfer-learning strategies for image classification. The project includes the original Oxford-IIIT Pet experiment and a fixed three-task Mini-VTAB benchmark using Linear Probe, LoRA, block OFT, BOFT, strict GOFT, and Full Fine-tuning.
+
+## Mini-VTAB-3 Extension
+
+The current benchmark uses 800 training and 200 validation examples per task, the complete task-specific test split, ViT-B/16 pretrained on ImageNet-21k, seed 42, and no task-specific augmentation. Every adapter method targets Query and Value in all 12 Transformer blocks so that the intervention scope remains comparable. The complete protocol, results, analysis, limitations, and reproduction commands are documented in the [Mini-VTAB-3 benchmark report](reports/mini_vtab_benchmark.md).
+
+| Method | DTD | EuroSAT | dSprites Orientation | Adapter parameters |
+| --- | ---: | ---: | ---: | ---: |
+| Linear Probe | 67.13% | 89.24% | 24.48% | 0 |
+| LoRA (Q+V, rank 8) | 69.68% | 94.24% | 49.58% | 294,912 |
+| Block OFT (Q+V, b=24) | 70.27% | 93.76% | 46.07% | 211,968 |
+| BOFT (Q+V, b=24, m=6) | **70.32%** | **95.41%** | **49.99%** | 1,271,808 |
+| Strict GOFT (Q+V) | 69.52% | 93.52% | 45.41% | **18,408** |
+
+GOFT assigns `d - 1 = 767` trainable Givens angles to each 768-dimensional projection and evaluates them in 10 parallel tree stages. It has no block-size or rank hyperparameter, starts as the exact identity transform, and remains strictly orthogonal throughout training. See the [GOFT report](reports/goft.md) for the implementation, protocol, timings, and interpretation.
 
 ## Results
 
@@ -26,6 +40,7 @@ The complete motivation, implementation, results, limitations, and proposed abla
 - **LoRA:** train rank-8 Query/Value adapters and the classifier
 - **Block OFT:** train one block-size-24 Query/Value orthogonal factor and the classifier
 - **BOFT:** train six-factor, block-size-24 Query/Value orthogonal butterfly adapters and the classifier
+- **Strict GOFT:** train 767 Givens angles per Query/Value projection and the classifier
 - **Full Fine-tuning:** train the complete backbone and classifier
 
 Instead of wrapping a complete off-the-shelf classification model, this repository implements the ViT embedding layer, multi-head self-attention, MLP, encoder block, and LoRA linear layer directly in PyTorch. A transparent parameter-name mapping then loads the official Hugging Face ViT-B/16 weights into the custom architecture.
@@ -37,6 +52,7 @@ Instead of wrapping a complete off-the-shelf classification model, this reposito
 ├── experiments/
 │   ├── lora/                     # Working ViT-LoRA experiment
 │   ├── boft/                     # Orthogonal butterfly Q/V adaptation
+│   ├── goft/                     # Strict Givens Q/V adaptation
 │   ├── linear_probe/             # Frozen-backbone baseline
 │   ├── oft/                      # Block-diagonal OFT experiment
 │   └── full_finetune/            # Full fine-tuning experiment
@@ -45,6 +61,7 @@ Instead of wrapping a complete off-the-shelf classification model, this reposito
 ├── reports/                      # Per-method and comparison reports
 ├── tests/test_lora.py            # End-to-end LoRA smoke test
 ├── tests/test_boft.py            # BOFT algebra and integration tests
+├── tests/test_goft.py            # GOFT schedule, orthogonality, and integration tests
 ├── tests/test_oft.py             # OFT algebra and shared-solve tests
 ├── checkpoints/                  # Generated experiment checkpoints
 └── requirements.txt
@@ -102,6 +119,15 @@ python -m tests.test_oft
 python -m experiments.oft.run_oft
 ```
 
+Run or verify strict GOFT on one Mini-VTAB task with:
+
+```bash
+python -m tests.test_goft
+python -m experiments.goft.run_goft --task dtd
+python -m experiments.goft.run_goft --task eurosat
+python -m experiments.goft.run_goft --task dsprites_orientation
+```
+
 ## Training Configuration
 
 | Hyperparameter | Value |
@@ -138,4 +164,5 @@ The completed experiments show that all five methods transfer strongly. In this 
 - [An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale](https://arxiv.org/abs/2010.11929)
 - [LoRA: Low-Rank Adaptation of Large Language Models](https://arxiv.org/abs/2106.09685)
 - [Parameter-Efficient Orthogonal Finetuning via Butterfly Factorization](https://arxiv.org/abs/2311.06243)
+- [Parameter Efficient Quasi-Orthogonal Fine-Tuning via Givens Rotation](https://proceedings.mlr.press/v235/ma24a.html)
 - [Oxford-IIIT Pet Dataset](https://www.robots.ox.ac.uk/~vgg/data/pets/)

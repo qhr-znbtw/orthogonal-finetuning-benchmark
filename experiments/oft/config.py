@@ -1,11 +1,8 @@
+"""Configuration for the Mini-VTAB ViT-B/16 block-OFT experiments."""
 
-"""Configuration for the ViT-B/16 block OFT experiment."""
-
-NUM_CLASSES = 37
 OFT_BLOCK_SIZE = 24
-
-NUM_EPOCHS = 20
-TRAIN_BATCH_SIZE = 32
+NUM_EPOCHS = 100
+WARMUP_EPOCHS = 10
 OFT_LEARNING_RATE = 1e-4
 CLASSIFIER_LEARNING_RATE = 1e-3
-WEIGHT_DECAY = 0.01
+WEIGHT_DECAY = 1e-4
